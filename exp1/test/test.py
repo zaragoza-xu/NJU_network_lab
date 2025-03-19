@@ -33,5 +33,6 @@ print("OK")
 # http 206
 headers = { 'Range': 'bytes=100-' }
 r = requests.get('http://10.0.0.1/index.html', headers=headers, verify=False)
+#print(len(r.content), len(open(test_dir + '/../index.html', 'rb').read()[100:]))
 assert(r.status_code == 206 and open(test_dir + '/../index.html', 'rb').read()[100:] == r.content)
 print("OK")
