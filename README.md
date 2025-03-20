@@ -1,4 +1,2 @@
-# 南京大学计算机网络实验代码
-
-该仓库包括实验课所需要用到的代码。持续更新中...
-- `exp1`：实验一
+# My implementation of NJU Computer Networking experiments.
+# Switch to different branches for each exp.
