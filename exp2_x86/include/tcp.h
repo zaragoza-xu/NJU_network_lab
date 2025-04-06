@@ -35,7 +35,7 @@ struct tcphdr {
 	u16 rwnd;			// receiving window
 	u16 checksum;		// checksum
 	u16 urp;			// urgent pointer
-} __attribute__((packed));
+} __attribute__((aligned(2)));
 
 #define TCP_HDR_OFFSET 5
 #define TCP_BASE_HDR_SIZE 20

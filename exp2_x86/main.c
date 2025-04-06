@@ -114,7 +114,7 @@ static void run_application(const char *basename, char **args, int n)
 
 int main(int argc, char **argv)
 {
-	srand(time(NULL) ^ (u32)&main);
+	srand(time(NULL) ^ (u64)&main);
 	setbuf(stdout,NULL);
 	
 	if (getuid() && geteuid()) {

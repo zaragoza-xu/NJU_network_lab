@@ -56,6 +56,8 @@ void tcp_send_packet(struct tcp_sock *tsk, char *packet, int len)
 	tsk->snd_nxt += tcp_data_len;
 
 	ip_send_packet(packet, len);
+//	fprintf(stderr, "%d %d\n", tsk->snd_nxt, tsk->snd_una);
+	assert(tsk->snd_nxt >= tsk->snd_una);
 }
 
 // send a tcp control packet
@@ -71,22 +73,26 @@ void tcp_send_control_packet(struct tcp_sock *tsk, u8 flags)
 		log(ERROR, "malloc tcp control packet failed.");
 		return ;
 	}
+	else
+	{
+		struct iphdr *ip = packet_to_ip_hdr(packet);
+		struct tcphdr *tcp = (struct tcphdr *)((char *)ip + IP_BASE_HDR_SIZE);
 
-	struct iphdr *ip = packet_to_ip_hdr(packet);
-	struct tcphdr *tcp = (struct tcphdr *)((char *)ip + IP_BASE_HDR_SIZE);
+		u16 tot_len = IP_BASE_HDR_SIZE + TCP_BASE_HDR_SIZE;
 
-	u16 tot_len = IP_BASE_HDR_SIZE + TCP_BASE_HDR_SIZE;
+		ip_init_hdr(ip, tsk->sk_sip, tsk->sk_dip, tot_len, IPPROTO_TCP);
+		tcp_init_hdr(tcp, tsk->sk_sport, tsk->sk_dport, tsk->snd_nxt, \
+				tsk->rcv_nxt, flags, tsk->rcv_wnd);
 
-	ip_init_hdr(ip, tsk->sk_sip, tsk->sk_dip, tot_len, IPPROTO_TCP);
-	tcp_init_hdr(tcp, tsk->sk_sport, tsk->sk_dport, tsk->snd_nxt, \
-			tsk->rcv_nxt, flags, tsk->rcv_wnd);
+		tcp->checksum = tcp_checksum(ip, tcp);
 
-	tcp->checksum = tcp_checksum(ip, tcp);
+		if (flags & (TCP_SYN|TCP_FIN))
+			tsk->snd_nxt += 1;
 
-	if (flags & (TCP_SYN|TCP_FIN))
-		tsk->snd_nxt += 1;
-
-	ip_send_packet(packet, pkt_size);
+		ip_send_packet(packet, pkt_size);
+	}
+//	fprintf(stderr, "%d %d\n", tsk->snd_nxt, tsk->snd_una);
+	assert(tsk->snd_nxt >= tsk->snd_una);
 }
 
 // send tcp reset packet
@@ -101,14 +107,17 @@ void tcp_send_reset(struct tcp_cb *cb)
 		log(ERROR, "malloc tcp control packet failed.");
 		return ;
 	}
+	else
+	{
+		struct iphdr *ip = packet_to_ip_hdr(packet);
+		struct tcphdr *tcp = (struct tcphdr *)((char *)ip + IP_BASE_HDR_SIZE);
 
-	struct iphdr *ip = packet_to_ip_hdr(packet);
-	struct tcphdr *tcp = (struct tcphdr *)((char *)ip + IP_BASE_HDR_SIZE);
+		u16 tot_len = IP_BASE_HDR_SIZE + TCP_BASE_HDR_SIZE;
+		ip_init_hdr(ip, cb->daddr, cb->saddr, tot_len, IPPROTO_TCP);
+		tcp_init_hdr(tcp, cb->dport, cb->sport, 0, cb->seq_end, TCP_RST|TCP_ACK, 0);
+		tcp->checksum = tcp_checksum(ip, tcp);
 
-	u16 tot_len = IP_BASE_HDR_SIZE + TCP_BASE_HDR_SIZE;
-	ip_init_hdr(ip, cb->daddr, cb->saddr, tot_len, IPPROTO_TCP);
-	tcp_init_hdr(tcp, cb->dport, cb->sport, 0, cb->seq_end, TCP_RST|TCP_ACK, 0);
-	tcp->checksum = tcp_checksum(ip, tcp);
-
-	ip_send_packet(packet, pkt_size);
+		ip_send_packet(packet, pkt_size);
+	}
+	
 }

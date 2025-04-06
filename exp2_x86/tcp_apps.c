@@ -30,6 +30,17 @@ void *tcp_server(void *arg)
 
 	log(DEBUG, "accept a connection.");
 
+	while(1)
+	{
+		char data[100] = {0};
+		if(tcp_sock_read(csk, data, 62) <= 0)
+			break;
+		char new_data[100] = "server echoes: ";
+		strcat(new_data, data);
+		if(tcp_sock_write(csk, new_data, strlen(new_data)) <= 0)
+			break;
+	}
+
 	sleep(5);
 
 	tcp_sock_close(csk);
@@ -51,7 +62,18 @@ void *tcp_client(void *arg)
 		exit(1);
 	}
 
-	sleep(1);
+	const char data[] = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
+	const u32 data_len = 62;
+	for(int i = 0; i < 6; i ++)
+	{
+		char new_data[100] = {0};
+		strncpy(new_data, data + i, data_len - i);
+		strncat(new_data, data, i);
+		tcp_sock_write(tsk, new_data, data_len);
+		if(tcp_sock_read(tsk, new_data, 100) <= 0)
+			break;
+		printf("%s\n", new_data);
+	}
 
 	tcp_sock_close(tsk);
 
