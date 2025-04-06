@@ -81,7 +81,7 @@ static inline u16 ip_checksum(struct iphdr *hdr)
 	return sum;
 }
 
-static inline struct iphdr *packet_to_ip_hdr(const char *packet)
+static inline struct iphdr *packet_to_ip_hdr(char *packet)
 {
 	return (struct iphdr *)(packet + ETHER_HDR_SIZE);
 }

@@ -6,12 +6,13 @@
 #include "base.h"
 
 struct icmphdr {
-	u8	type;				// type of icmp message
-	u8	code;				// icmp code
+	
 	u16	checksum;			
 	u16 icmp_identifier;	// icmp identifier, used in icmp echo request
 	u16 icmp_sequence;		// icmp sequence, used in icmp echo request
-}__attribute__((packed));
+	u8	type;				// type of icmp message
+	u8	code;				// icmp code
+}__attribute__((aligned(2)));
 
 #define ICMP_HDR_SIZE	sizeof(struct icmphdr)
 #define ICMP_COPIED_DATA_LEN	8

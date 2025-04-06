@@ -74,13 +74,38 @@ struct tcp_sock *alloc_tcp_sock()
 // decreased to zero.
 void free_tcp_sock(struct tcp_sock *tsk)
 {
-	fprintf(stdout, "TODO: implement %s please.\n", __FUNCTION__);
+//	fprintf(stdout, "TODO: implement %s please.\n", __FUNCTION__);
+
+	tsk->ref_cnt -= 1;
+	
+	if(tsk->ref_cnt == 0)
+	{
+		free_ring_buffer(tsk->rcv_buf);
+
+		free_wait_struct(tsk->wait_accept);
+		free_wait_struct(tsk->wait_connect);
+		free_wait_struct(tsk->wait_recv);
+		free_wait_struct(tsk->wait_send);
+		log(DEBUG, "tsk freed");
+		free(tsk);
+	}
 }
 
 // lookup tcp sock in established_table with key (saddr, daddr, sport, dport)
 struct tcp_sock *tcp_sock_lookup_established(u32 saddr, u32 daddr, u16 sport, u16 dport)
 {
-	fprintf(stdout, "TODO: implement %s please.\n", __FUNCTION__);
+//	fprintf(stdout, "TODO: implement %s please.\n", __FUNCTION__);
+
+	int hash = tcp_hash_function(saddr, daddr, sport, dport);
+
+	struct tcp_sock *tsk;
+
+	list_for_each_entry(tsk, &tcp_established_sock_table[hash], hash_list)
+	{
+		if(tsk->sk_sip == saddr && tsk->sk_sport == sport
+		&& tsk->sk_dip == daddr && tsk->sk_dport == dport)
+			return tsk;
+	}
 
 	return NULL;
 }
@@ -90,7 +115,17 @@ struct tcp_sock *tcp_sock_lookup_established(u32 saddr, u32 daddr, u16 sport, u1
 // In accordance with BSD socket, saddr is in the argument list, but never used.
 struct tcp_sock *tcp_sock_lookup_listen(u32 saddr, u16 sport)
 {
-	fprintf(stdout, "TODO: implement %s please.\n", __FUNCTION__);
+//	fprintf(stdout, "TODO: implement %s please.\n", __FUNCTION__);
+
+	int hash = tcp_hash_function(0, 0, sport, 0);
+
+	struct tcp_sock *tsk;
+
+	list_for_each_entry(tsk, &tcp_listen_sock_table[hash], hash_list)
+	{
+		if(tsk->sk_sport == sport)
+			return tsk;
+	}
 
 	return NULL;
 }
@@ -236,18 +271,67 @@ int tcp_sock_bind(struct tcp_sock *tsk, struct sock_addr *skaddr)
 //    means the connection is established.
 int tcp_sock_connect(struct tcp_sock *tsk, struct sock_addr *skaddr)
 {
-	fprintf(stdout, "TODO: implement %s please.\n", __FUNCTION__);
+//	fprintf(stdout, "TODO: implement %s please.\n", __FUNCTION__);
 
-	return -1;
+	tsk->sk_sip = (longest_prefix_match(ntohl(skaddr->ip))->iface->ip);
+	if(tcp_sock_set_sport(tsk, 0) < 0)
+		return -1;
+	
+	tsk->sk_dip = ntohl(skaddr->ip), tsk->sk_dport = ntohs(skaddr->port);
+
+	tsk->state = TCP_SYN_SENT;
+	tcp_hash(tsk);
+	tsk->iss = tcp_new_iss();
+	tsk->snd_nxt = tsk->iss;
+	tsk->snd_una = tsk->iss;
+
+
+	tcp_send_control_packet(tsk, TCP_SYN);
+	
+//	fprintf(stderr, "%u %u %u %u\n", tsk->sk_sip, tsk->sk_sport, tsk->sk_dip, tsk->sk_dport);
+	log(DEBUG, "SYN sent.");
+	sleep_on(tsk->wait_connect);
+
+
+
+	tcp_send_control_packet(tsk, TCP_ACK);
+	tsk->state = TCP_ESTABLISHED;
+	log(DEBUG, "ACK sent, client woken up.");
+
+	return 0;
 }
 
 // set backlog (the maximum number of pending connection requst), switch the
 // TCP_STATE, and hash the tcp sock into listen_table
 int tcp_sock_listen(struct tcp_sock *tsk, int backlog)
 {
-	fprintf(stdout, "TODO: implement %s please.\n", __FUNCTION__);
+//	fprintf(stdout, "TODO: implement %s please.\n", __FUNCTION__);
 
-	return -1;
+	tsk->backlog = backlog;
+	tsk->state = TCP_LISTEN;
+
+	if(tcp_hash(tsk) < 0)
+		return -1;
+
+	return 0;
+}
+
+inline struct tcp_sock *tcp_sock_lookup_listen_queue(struct tcp_sock *tsk, struct tcp_cb *cb)
+{
+	struct tcp_sock *tmp;
+	list_for_each_entry(tmp, &tsk->listen_queue, list)
+	{
+		if(tmp->sk_sip == cb->daddr && tmp->sk_sport == cb->dport
+		&& tmp->sk_dip == cb->saddr && tmp->sk_dport == cb->sport)
+		{
+			if(cb->ack == tmp->iss + 1)
+			{
+				return tmp;
+				break;
+			}
+		}
+	}
+	return NULL;
 }
 
 // check whether the accept queue is full
@@ -285,14 +369,73 @@ inline struct tcp_sock *tcp_sock_accept_dequeue(struct tcp_sock *tsk)
 // otherwise, sleep on the wait_accept for the incoming connection requests
 struct tcp_sock *tcp_sock_accept(struct tcp_sock *tsk)
 {
-	fprintf(stdout, "TODO: implement %s please.\n", __FUNCTION__);
+//	fprintf(stdout, "TODO: implement %s please.\n", __FUNCTION__);
 
+	while(1)
+	{
+		if(!list_empty(&tsk->accept_queue))
+		{
+			return tcp_sock_accept_dequeue(tsk);
+		}
+		else
+			sleep_on(tsk->wait_accept);
+	}
 	return NULL;
+}
+
+int tcp_sock_read(struct tcp_sock *tsk, char *buf, int len)
+{
+
+	int read_len = 0;
+	while((read_len = read_ring_buffer(tsk->rcv_buf, buf, len)) == 0)
+	{
+		sleep_on(tsk->wait_recv);
+		if(tsk->state == TCP_CLOSE_WAIT)
+			break;
+	}
+		
+	return read_len;
+}
+
+int tcp_sock_write(struct tcp_sock *tsk, char *buf, int len)
+{
+	int hdr_size = ETHER_HDR_SIZE + IP_BASE_HDR_SIZE + TCP_BASE_HDR_SIZE;
+	int pkt_size = hdr_size + len;
+	char *packet = malloc(pkt_size);
+	
+	strncpy((char *)(packet + hdr_size), buf, len);
+	if(tsk->adv_wnd >= len)
+		tcp_send_packet(tsk, packet, pkt_size);
+	else
+		return -1;
+	//free(packet);
+	return len;
 }
 
 // close the tcp sock, by releasing the resources, sending FIN/RST packet
 // to the peer, switching TCP_STATE to closed
 void tcp_sock_close(struct tcp_sock *tsk)
 {
-	fprintf(stdout, "TODO: implement %s please.\n", __FUNCTION__);
+//	fprintf(stdout, "TODO: implement %s please.\n", __FUNCTION__);
+
+	
+	switch(tsk->state)
+	{
+		case TCP_ESTABLISHED:
+		tsk->state = TCP_FIN_WAIT_1;
+		log(DEBUG, "FIN sent, closing connection.");
+		break;
+
+		case TCP_CLOSE_WAIT:
+		tsk->state = TCP_LAST_ACK;
+		log(DEBUG, "FIN sent, closing connection.");
+		break;
+
+		default:
+		log(ERROR, "sock_close: invalid state.");
+		break;
+	}
+	tcp_send_control_packet(tsk, TCP_FIN);
+	
+
 }
