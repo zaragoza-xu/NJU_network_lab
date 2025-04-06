@@ -2,6 +2,7 @@ import sys
 import string
 import socket
 from time import sleep
+import os
 
 
 def server(port):
@@ -27,7 +28,9 @@ def client(ip, port):
     s.close()
 
 if __name__ == '__main__':
+#    os.system("sudo tcpdump -i h2-eth0 -w /tmp/test_capture.pcap &")
     if sys.argv[1] == 'server':
         server(sys.argv[2])
     elif sys.argv[1] == 'client':
         client(sys.argv[2], sys.argv[3])
+ #   os.system("sudo killall tcpdump")

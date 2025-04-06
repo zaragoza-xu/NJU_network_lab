@@ -29,7 +29,7 @@ static int copy_flag_str(u8 flags, int flag, char *buf, int start,
 }
 
 // copy flag string to buf
-void tcp_copy_flags_to_str(u8 flags, char buf[32])
+void tcp_copy_flags_to_str(u8 flags, char buf[])
 {
 	int len = 0;
 	memset(buf, 0, 32);
@@ -77,5 +77,12 @@ void handle_tcp_packet(char *packet, struct iphdr *ip, struct tcphdr *tcp)
 
 	struct tcp_sock *tsk = tcp_sock_lookup(&cb);
 
+	if(!tsk)
+	{
+		log(ERROR, "received tcp packet with invalid port, drop it.");
+//		fprintf(stderr,"%u %u\n", cb.sport, cb.dport);
+		fflush(stderr);
+		return ;
+	}
 	tcp_process(tsk, &cb, packet);
 }

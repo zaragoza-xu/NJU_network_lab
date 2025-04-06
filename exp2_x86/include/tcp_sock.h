@@ -114,6 +114,7 @@ struct tcp_sock {
 
 void tcp_set_state(struct tcp_sock *tsk, int state);
 
+struct tcp_sock *tcp_sock_lookup_listen_queue(struct tcp_sock *tsk, struct tcp_cb *cb);
 int tcp_sock_accept_queue_full(struct tcp_sock *tsk);
 void tcp_sock_accept_enqueue(struct tcp_sock *tsk);
 struct tcp_sock *tcp_sock_accept_dequeue(struct tcp_sock *tsk);
