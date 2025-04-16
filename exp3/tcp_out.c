@@ -10,7 +10,7 @@
 #include <string.h>
 
 // initialize tcp header according to the arguments
-static void tcp_init_hdr(struct tcphdr *tcp, u16 sport, u16 dport, u32 seq, u32 ack,
+void tcp_init_hdr(struct tcphdr *tcp, u16 sport, u16 dport, u32 seq, u32 ack,
 		u8 flags, u16 rwnd)
 {
 	memset((char *)tcp, 0, TCP_BASE_HDR_SIZE);
@@ -56,8 +56,7 @@ void tcp_send_packet(struct tcp_sock *tsk, char *packet, int len)
 	tsk->snd_nxt += tcp_data_len;
 
 	ip_send_packet(packet, len);
-//	fprintf(stderr, "%d %d\n", tsk->snd_nxt, tsk->snd_una);
-	assert(tsk->snd_nxt >= tsk->snd_una);
+
 }
 
 // send a tcp control packet
@@ -69,6 +68,8 @@ void tcp_send_control_packet(struct tcp_sock *tsk, u8 flags)
 {
 	int pkt_size = ETHER_HDR_SIZE + IP_BASE_HDR_SIZE + TCP_BASE_HDR_SIZE;
 	char *packet = malloc(pkt_size);
+
+	memset(packet, 0, pkt_size);
 	if (!packet) {
 		log(ERROR, "malloc tcp control packet failed.");
 		return ;
@@ -81,18 +82,16 @@ void tcp_send_control_packet(struct tcp_sock *tsk, u8 flags)
 		u16 tot_len = IP_BASE_HDR_SIZE + TCP_BASE_HDR_SIZE;
 
 		ip_init_hdr(ip, tsk->sk_sip, tsk->sk_dip, tot_len, IPPROTO_TCP);
-		tcp_init_hdr(tcp, tsk->sk_sport, tsk->sk_dport, tsk->snd_nxt, \
-				tsk->rcv_nxt, flags, tsk->rcv_wnd);
+		tcp_init_hdr(tcp, tsk->sk_sport, tsk->sk_dport, tsk->snd_nxt, tsk->rcv_nxt, flags, tsk->rcv_wnd);
 
 		tcp->checksum = tcp_checksum(ip, tcp);
-
+		
 		if (flags & (TCP_SYN|TCP_FIN))
 			tsk->snd_nxt += 1;
 
 		ip_send_packet(packet, pkt_size);
 	}
-//	fprintf(stderr, "%d %d\n", tsk->snd_nxt, tsk->snd_una);
-	assert(tsk->snd_nxt >= tsk->snd_una);
+
 }
 
 // send tcp reset packet

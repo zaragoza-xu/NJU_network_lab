@@ -63,6 +63,10 @@ struct tcp_sock *alloc_tcp_sock()
 	tsk->wait_recv = alloc_wait_struct();
 	tsk->wait_send = alloc_wait_struct();
 
+	pthread_mutex_init(&tsk->sk_lock, NULL);
+	pthread_mutex_init(&tsk->rcv_buf_lock, NULL);
+	pthread_mutex_init(&tsk->send_buf_lock, NULL);
+
 	return tsk;
 }
 
@@ -77,10 +81,14 @@ void free_tcp_sock(struct tcp_sock *tsk)
 //	fprintf(stdout, "TODO: implement %s please.\n", __FUNCTION__);
 
 	tsk->ref_cnt -= 1;
-	
+	log(DEBUG, "tsk->ref_cnt --, now %d", tsk->ref_cnt);
 	if(tsk->ref_cnt == 0)
 	{
 		free_ring_buffer(tsk->rcv_buf);
+
+		pthread_mutex_destroy(&tsk->sk_lock);
+		pthread_mutex_destroy(&tsk->rcv_buf_lock);
+		pthread_mutex_destroy(&tsk->send_buf_lock);
 
 		free_wait_struct(tsk->wait_accept);
 		free_wait_struct(tsk->wait_connect);
@@ -249,6 +257,18 @@ void tcp_unhash(struct tcp_sock *tsk)
 	}
 }
 
+#define TCP_MSS (ETH_FRAME_LEN - ETHER_HDR_SIZE - IP_BASE_HDR_SIZE - TCP_BASE_HDR_SIZE)
+
+// test if available send wnd > MSS, return 0 if not
+int tcp_tx_window_test(struct tcp_sock *tsk)
+{
+	//printf("%d %d %d\n", tsk->snd_una , tsk->snd_wnd , tsk->snd_nxt);
+	if(tsk->snd_una + tsk->snd_wnd - tsk->snd_nxt >= TCP_MSS)
+		return 1;
+	return 0;
+}
+
+
 // XXX: skaddr here contains network-order variables
 int tcp_sock_bind(struct tcp_sock *tsk, struct sock_addr *skaddr)
 {
@@ -387,27 +407,62 @@ int tcp_sock_read(struct tcp_sock *tsk, char *buf, int len)
 {
 
 	int read_len = 0;
+
+	log(DEBUG, "tsk read: attempt to acquire rcv_buf_lock");
+	if(pthread_mutex_lock(&tsk->rcv_buf_lock) != 0)
+	{
+		perror("tsk rcv_buf_lock");
+		return -1;
+	}
+	log(DEBUG, "tsk read: rcv_buf_lock acquired");
 	while((read_len = read_ring_buffer(tsk->rcv_buf, buf, len)) == 0)
 	{
+		tsk->rcv_wnd = ring_buffer_free(tsk->rcv_buf);
+
+		pthread_mutex_unlock(&tsk->rcv_buf_lock);
+		log(DEBUG, "tsk read: rcv_buf_lock released, rcv_wnd %d", tsk->rcv_wnd);
+
 		sleep_on(tsk->wait_recv);
-		if(tsk->state == TCP_CLOSE_WAIT)
-			break;
-	}
 		
+		
+		log(DEBUG, "tsk read: attempt to acquire rcv_buf_lock");
+		if(pthread_mutex_lock(&tsk->rcv_buf_lock) != 0)
+		{
+			perror("tsk rcv_buf_lock");
+			return -1;
+		}
+		log(DEBUG, "tsk read: rcv_buf_lock acquired");
+	}
+	log(DEBUG, "tsk read: rcv_buf_lock released, %p", tsk);
+	pthread_mutex_unlock(&tsk->rcv_buf_lock);
+	log(DEBUG, "tsk read: rcv_buf_lock released, read_len %d", read_len);	
 	return read_len;
 }
 
 int tcp_sock_write(struct tcp_sock *tsk, char *buf, int len)
 {
-	int hdr_size = ETHER_HDR_SIZE + IP_BASE_HDR_SIZE + TCP_BASE_HDR_SIZE;
-	int pkt_size = hdr_size + len;
-	char *packet = malloc(pkt_size);
+	char *packet = malloc(HDR_SIZE + len);
 	
-	strncpy((char *)(packet + hdr_size), buf, len);
-	if(tsk->adv_wnd >= len)
-		tcp_send_packet(tsk, packet, pkt_size);
-	else
-		return -1;
+	strncpy((char *)(packet + HDR_SIZE), buf, len);
+	
+	log(DEBUG, "attempt to acquire send_buf_lock");
+	pthread_mutex_lock(&tsk->send_buf_lock);
+	log(DEBUG, "send_buf_lock acquired");
+	while(!tcp_tx_window_test(tsk))
+	{
+		pthread_mutex_unlock(&tsk->send_buf_lock);
+		log(DEBUG, "send_buf_lock released");
+		
+		sleep_on(tsk->wait_send);
+		log(DEBUG, "attempt to acquire send_buf_lock");
+		pthread_mutex_lock(&tsk->send_buf_lock);
+		log(DEBUG, "send_buf_lock acquired");
+	}
+	
+	tcp_send_packet(tsk, packet, HDR_SIZE + len);
+
+	pthread_mutex_unlock(&tsk->send_buf_lock);
+	log(DEBUG, "send_buf_lock released");
 	//free(packet);
 	return len;
 }
@@ -435,7 +490,7 @@ void tcp_sock_close(struct tcp_sock *tsk)
 		log(ERROR, "sock_close: invalid state.");
 		break;
 	}
-	tcp_send_control_packet(tsk, TCP_FIN);
+	tcp_send_control_packet(tsk, TCP_FIN | TCP_ACK);
 	
 
 }

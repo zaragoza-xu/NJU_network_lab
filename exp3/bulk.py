@@ -4,22 +4,23 @@ import socket
 import time
 
 def server(port):
-    s = socket.socket()
-    fp = open('server-output.dat', 'w')
-    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    
-    s.bind(('0.0.0.0', int(port)))
-    s.listen(3)
-    
-    cs, addr = s.accept()
-    print(addr)
-    
-    while True:
-        data = cs.recv(1000)
-        if data:
-            fp.write(data.decode())
-        else:
-            break
+    with socket.socket() as s, open('server-output.dat', 'w') as fp:   # Make sure graceful exit
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        
+        s.bind(('0.0.0.0', int(port)))
+        s.listen(3)
+        
+        cs, addr = s.accept()
+        print(addr)
+        
+        while True:
+            data = cs.recv(1000)
+            if data:
+                print(data.decode())
+                fp.write(data.decode())
+            else:
+                break
+        cs.close()
 
     s.close()
     fp.close()

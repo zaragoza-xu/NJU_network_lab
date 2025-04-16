@@ -14,6 +14,9 @@
 #define PORT_MIN	12345
 #define PORT_MAX	23456
 
+#define TCP_MSS (ETH_FRAME_LEN - ETHER_HDR_SIZE - IP_BASE_HDR_SIZE - TCP_BASE_HDR_SIZE)
+#define HDR_SIZE  (ETHER_HDR_SIZE + IP_BASE_HDR_SIZE + TCP_BASE_HDR_SIZE)
+
 struct sock_addr {
 	u32 ip;
 	u16 port;
@@ -63,6 +66,8 @@ struct tcp_sock {
 	struct list_head list;
 	// tcp timer used during TCP_TIME_WAIT state
 	struct tcp_timer timewait;
+	// tcp persist timer
+	struct tcp_timer persist_timer;
 
 	// used for timeout retransmission
 	struct tcp_timer retrans_timer;
@@ -72,6 +77,12 @@ struct tcp_sock {
 	struct synch_wait *wait_accept;
 	struct synch_wait *wait_recv;
 	struct synch_wait *wait_send;
+
+	// protect snd_una etc.
+	pthread_mutex_t sk_lock;
+	
+	pthread_mutex_t rcv_buf_lock;
+	pthread_mutex_t send_buf_lock;
 
 	// receiving buffer
 	struct ring_buffer *rcv_buf;
@@ -119,6 +130,8 @@ int tcp_sock_accept_queue_full(struct tcp_sock *tsk);
 void tcp_sock_accept_enqueue(struct tcp_sock *tsk);
 struct tcp_sock *tcp_sock_accept_dequeue(struct tcp_sock *tsk);
 
+int tcp_tx_window_test(struct tcp_sock *tsk);
+
 int tcp_hash(struct tcp_sock *tsk);
 void tcp_unhash(struct tcp_sock *tsk);
 void tcp_bind_unhash(struct tcp_sock *tsk);
@@ -130,6 +143,7 @@ u32 tcp_new_iss();
 
 void tcp_send_reset(struct tcp_cb *cb);
 
+void tcp_init_hdr(struct tcphdr *tcp, u16 sport, u16 dport, u32 seq, u32 ack, u8 flags, u16 rwnd);
 void tcp_send_control_packet(struct tcp_sock *tsk, u8 flags);
 void tcp_send_packet(struct tcp_sock *tsk, char *packet, int len);
 int tcp_send_data(struct tcp_sock *tsk, char *buf, int len);
