@@ -30,19 +30,25 @@ void *tcp_server(void *arg)
 
 	log(DEBUG, "accept a connection.");
 
-	while(1)
+	FILE *file;
+	if((file = fopen("server-output.dat", "w")) == NULL)
 	{
-		char data[100] = {0};
-		if(tcp_sock_read(csk, data, 62) <= 0)
-			break;
-		char new_data[100] = "server echoes: ";
-		strcat(new_data, data);
-		if(tcp_sock_write(csk, new_data, strlen(new_data)) <= 0)
-			break;
+		log(ERROR, "open output file failed.");
+		exit(1);
 	}
 
-	sleep(5);
+	int len;
+	char buf[TCP_MSS + 10];
+	while(tcp_sock_read(csk, buf, TCP_MSS) > 0)
+	{
+		fputs(buf, file);
+		fflush(file);
+		printf("%s", buf);
+		memset(buf, 0, sizeof(buf));
+	}
 
+	//sleep(5);
+	
 	tcp_sock_close(csk);
 	
 	return NULL;
@@ -62,17 +68,21 @@ void *tcp_client(void *arg)
 		exit(1);
 	}
 
-	const char data[] = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
-	const u32 data_len = 62;
-	for(int i = 0; i < 6; i ++)
+	FILE *file;
+	if((file = fopen("client-input.dat", "r")) == NULL)
 	{
-		char new_data[100] = {0};
-		strncpy(new_data, data + i, data_len - i);
-		strncat(new_data, data, i);
-		tcp_sock_write(tsk, new_data, data_len);
-		if(tcp_sock_read(tsk, new_data, 100) <= 0)
-			break;
-		printf("%s\n", new_data);
+		log(ERROR, "open input file failed.");
+		exit(1);
+	}
+
+	int len;
+	char buf[TCP_MSS];
+	while((len = fread(buf, sizeof(char), TCP_MSS, file)) > 0)
+	{
+		//buf[TCP_MSS - 1] = '\0';
+
+		tcp_sock_write(tsk, buf, len);
+		
 	}
 
 	tcp_sock_close(tsk);

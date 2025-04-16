@@ -84,5 +84,13 @@ void handle_tcp_packet(char *packet, struct iphdr *ip, struct tcphdr *tcp)
 		fflush(stderr);
 		return ;
 	}
+	
+	log(DEBUG, "attempt to acquire sk_lock");
+	pthread_mutex_lock(&tsk->sk_lock);
+	log(DEBUG, "sk_lock acquired");
+
 	tcp_process(tsk, &cb, packet);
+
+	pthread_mutex_unlock(&tsk->sk_lock);
+	log(DEBUG, "sk_lock released");
 }
