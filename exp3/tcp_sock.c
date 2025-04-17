@@ -50,7 +50,7 @@ struct tcp_sock *alloc_tcp_sock()
 	memset(tsk, 0, sizeof(struct tcp_sock));
 
 	tsk->state = TCP_CLOSED;
-	tsk->rcv_wnd = TCP_DEFAULT_WINDOW;
+	tsk->rcv_wnd = TCP_DEFAULT_WINDOW / 2;
 
 	init_list_head(&tsk->list);
 	init_list_head(&tsk->listen_queue);
