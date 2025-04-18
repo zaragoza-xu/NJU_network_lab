@@ -10,6 +10,7 @@ struct tcp_timer {
 	int timeout;	// in micro second
 	struct list_head list;
 	int enable;
+	int retrans_cnt; // if larger than limit, send RST
 };
 
 struct tcp_sock;
@@ -27,10 +28,12 @@ struct tcp_sock;
 void *tcp_timer_thread(void *arg);
 // add the timer of tcp sock to timer_list
 void tcp_set_timewait_timer(struct tcp_sock *);
+
 void tcp_set_persist_timer(struct tcp_sock *tsk);
 void tcp_unset_persist_timer(struct tcp_sock *tsk);
-void tcp_set_retrans_timer(struct tcp_sock *tsk);
 
+void tcp_set_retrans_timer(struct tcp_sock *tsk);
+void tcp_update_retrans_timer(struct tcp_sock *tsk);
 void tcp_unset_retrans_timer(struct tcp_sock *tsk);
 
 #endif

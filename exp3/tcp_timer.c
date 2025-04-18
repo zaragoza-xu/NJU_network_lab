@@ -57,10 +57,10 @@ void tcp_unset_persist_timer(struct tcp_sock *tsk)
 {
 	if(tsk->persist_timer.enable == 0)
 		return ;
-	free_tcp_sock(tsk);
+	
 	list_delete_entry(&tsk->persist_timer.list);
 	tsk->persist_timer.enable = 0;
-
+	free_tcp_sock(tsk);
 }
 
 /*
@@ -104,6 +104,69 @@ void tcp_send_probe_packet(struct tcp_sock *tsk)
 	assert(tsk->snd_nxt >= tsk->snd_una);
 }
 
+/*
+1. 如果已经启用，则更新超时时间为当前的RTO后退出
+2. 创建定时器，设置各个成员变量，初始RTO为TCP_RETRANS_INTERVAL_INITIAL。
+3. 增加tsk的引用计数，将定时器加入timer_list末尾
+*/
+void tcp_set_retrans_timer(struct tcp_sock *tsk)
+{
+	if(tsk->retrans_timer.enable)
+	{
+		tsk->retrans_timer.timeout = tsk->rto;
+		return ;
+	}
+
+	tsk->retrans_timer.enable = 1;
+	tsk->retrans_timer.retrans_cnt = 0;
+	tsk->retrans_timer.timeout = tsk->rto;
+	tsk->retrans_timer.type = 1;
+
+	tsk->ref_cnt ++;
+
+	list_add_tail(&tsk->retrans_timer.list, &timer_list);
+	
+	log(DEBUG, "tsk retrans timer set");
+}
+
+/*
+1. 如果已经禁用，不做任何事
+2. 调用free_tcp_sock减少tsk引用计数，并从链表中移除timer
+*/
+void tcp_unset_retrans_timer(struct tcp_sock *tsk)
+{
+	if(!tsk->retrans_timer.enable)
+		return ;
+	
+	
+	list_delete_entry(&tsk->retrans_timer.list);
+	
+	tsk->retrans_timer.enable = 0;
+	free_tcp_sock(tsk);
+}
+
+/*
+1. 确认定时器是启用状态
+2. 如果发送队列为空，则删除定时器，并且唤醒发送数据的进程。否则重置计时器，包括timeout和重传计数。
+
+注意调用这个函数之前，需要完成对发送队列的更新。
+*/
+void tcp_update_retrans_timer(struct tcp_sock *tsk)
+{
+	if(!tsk->retrans_timer.enable)
+		return ;
+	
+	if(list_empty(&tsk->send_buf))
+	{
+		tcp_unset_retrans_timer(tsk);
+		log(DEBUG, "retrans timer unset");
+		wake_up(tsk->wait_send);
+	}
+	else
+	{
+		tcp_set_retrans_timer(tsk);
+	}
+}
 
 // scan the timer_list, find the tcp sock which stays for at 2*MSL, release it
 void tcp_scan_timer_list()
@@ -128,11 +191,42 @@ void tcp_scan_timer_list()
 			tsk = (struct tcp_sock *)((char *)i - offsetof(struct tcp_sock, timewait));
 			tsk->state = TCP_CLOSED;
 			log(DEBUG, "tsk time up");
-			if(!tsk->parent)
-				tcp_bind_unhash(tsk);
+			tcp_bind_unhash(tsk);
 			tcp_unhash(tsk);
 			break;
 			
+			case 1:
+			tsk = (struct tcp_sock *)((char *)i - offsetof(struct tcp_sock, retrans_timer));
+			if(i->retrans_cnt >= 3)
+			{
+				log(DEBUG, "retrans time exceed");
+				struct tcp_cb cb;
+				struct send_buf_entry *buf = list_entry(tsk->send_buf.next, struct send_buf_entry, list);
+				tcp_cb_init((struct iphdr*)buf->data + ETHER_HDR_SIZE, 
+							(struct tcphdr*)buf->data + ETHER_HDR_SIZE + IP_BASE_HDR_SIZE, &cb);
+				
+				tcp_send_reset(&cb);
+				wake_up(tsk->wait_connect);
+				wake_up(tsk->wait_send);
+				wake_up(tsk->wait_recv);
+				wake_up(tsk->wait_accept);
+
+				tcp_unset_persist_timer(tsk);
+				tcp_unset_retrans_timer(tsk);
+				
+				tcp_bind_unhash(tsk);
+				tcp_unhash(tsk);
+				return ;
+			}
+			else
+			{
+				log(DEBUG, "retrans timer up");
+				tcp_retrans_send_buffer(tsk);
+				i->retrans_cnt ++;
+				i->timeout = (tsk->rto *= 2);
+			}
+			break;
+
 			case 2:
 			tsk = (struct tcp_sock *)((char *)i - offsetof(struct tcp_sock, persist_timer));
 			if(tsk->state == TCP_ESTABLISHED && tsk->snd_wnd < TCP_MSS)

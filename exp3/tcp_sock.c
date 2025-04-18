@@ -51,10 +51,14 @@ struct tcp_sock *alloc_tcp_sock()
 
 	tsk->state = TCP_CLOSED;
 	tsk->rcv_wnd = TCP_DEFAULT_WINDOW / 2;
+	tsk->rto = TCP_RETRANS_INTERVAL_INITIAL;
 
+	init_list_head(&tsk->bind_hash_list);
 	init_list_head(&tsk->list);
 	init_list_head(&tsk->listen_queue);
 	init_list_head(&tsk->accept_queue);
+	init_list_head(&tsk->send_buf);
+	init_list_head(&tsk->rcv_ofo_buf);
 
 	tsk->rcv_buf = alloc_ring_buffer(tsk->rcv_wnd);
 
@@ -65,6 +69,7 @@ struct tcp_sock *alloc_tcp_sock()
 
 	pthread_mutex_init(&tsk->sk_lock, NULL);
 	pthread_mutex_init(&tsk->rcv_buf_lock, NULL);
+	pthread_mutex_init(&tsk->rcv_ofo_buf_lock, NULL);
 	pthread_mutex_init(&tsk->send_buf_lock, NULL);
 
 	return tsk;
@@ -315,6 +320,7 @@ int tcp_sock_connect(struct tcp_sock *tsk, struct sock_addr *skaddr)
 
 
 	tcp_send_control_packet(tsk, TCP_ACK);
+	tcp_unset_retrans_timer(tsk);
 	tsk->state = TCP_ESTABLISHED;
 	log(DEBUG, "ACK sent, client woken up.");
 
@@ -417,6 +423,11 @@ int tcp_sock_read(struct tcp_sock *tsk, char *buf, int len)
 	log(DEBUG, "tsk read: rcv_buf_lock acquired");
 	while((read_len = read_ring_buffer(tsk->rcv_buf, buf, len)) == 0)
 	{
+		if(tsk->state == TCP_CLOSE_WAIT)
+		{
+			break;
+		}
+
 		tsk->rcv_wnd = ring_buffer_free(tsk->rcv_buf);
 
 		pthread_mutex_unlock(&tsk->rcv_buf_lock);
@@ -445,24 +456,24 @@ int tcp_sock_write(struct tcp_sock *tsk, char *buf, int len)
 	
 	strncpy((char *)(packet + HDR_SIZE), buf, len);
 	
-	log(DEBUG, "attempt to acquire send_buf_lock");
-	pthread_mutex_lock(&tsk->send_buf_lock);
-	log(DEBUG, "send_buf_lock acquired");
+	log(DEBUG, "attempt to acquire sk_lock");
+	pthread_mutex_lock(&tsk->sk_lock);
+	log(DEBUG, "sk_lock acquired");
 	while(!tcp_tx_window_test(tsk))
 	{
-		pthread_mutex_unlock(&tsk->send_buf_lock);
-		log(DEBUG, "send_buf_lock released");
+		pthread_mutex_unlock(&tsk->sk_lock);
+		log(DEBUG, "sk_lock released");
 		
 		sleep_on(tsk->wait_send);
-		log(DEBUG, "attempt to acquire send_buf_lock");
-		pthread_mutex_lock(&tsk->send_buf_lock);
-		log(DEBUG, "send_buf_lock acquired");
+		log(DEBUG, "attempt to acquire sk_lock");
+		pthread_mutex_lock(&tsk->sk_lock);
+		log(DEBUG, "sk_lock acquired");
 	}
 	
 	tcp_send_packet(tsk, packet, HDR_SIZE + len);
 
-	pthread_mutex_unlock(&tsk->send_buf_lock);
-	log(DEBUG, "send_buf_lock released");
+	pthread_mutex_unlock(&tsk->sk_lock);
+	log(DEBUG, "sk_lock released");
 	//free(packet);
 	return len;
 }
