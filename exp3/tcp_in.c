@@ -41,8 +41,14 @@ static inline void tcp_update_window_safe(struct tcp_sock *tsk, struct tcp_cb *c
 static inline int is_tcp_seq_valid(struct tcp_sock *tsk, struct tcp_cb *cb)
 {
 	u32 rcv_end = tsk->rcv_nxt + max(tsk->rcv_wnd, 1);
-	if (less_than_32b(cb->seq, rcv_end) && less_or_equal_32b(tsk->rcv_nxt, cb->seq_end)) {
+	log(DEBUG, "rcv_nxt %d, rcv_wnd %d, seq %d", tsk->rcv_nxt, tsk->rcv_wnd, cb->seq);
+	if (less_than_32b(cb->seq_end, rcv_end) && less_or_equal_32b(tsk->rcv_nxt, cb->seq)) {
 		return 1;
+	}
+	else if(less_than_32b(cb->seq, tsk->rcv_nxt))
+	{
+		tcp_send_control_packet(tsk, TCP_ACK);
+		return 0;
 	}
 	else {
 		log(ERROR, "received packet with invalid seq, drop it.");
@@ -61,7 +67,7 @@ int tcp_move_rcv_ofo_buf(struct tcp_sock *tsk)
 	struct rcv_ofo_buf_entry *pos, *q;
 	list_for_each_entry_safe(pos, q, &tsk->rcv_ofo_buf, list)
 	{
-		log(DEBUG, "rcv_ofo_buf: %d %d", pos->seq, tsk->rcv_nxt);
+		log(DEBUG, "rcv_ofo_buf: %u %u", pos->seq, tsk->rcv_nxt);
 		if(pos->seq == tsk->rcv_nxt)
 		{
 			log(DEBUG, "tcp_process write: attempt to acquire rcv_buf_lock %p", tsk);
@@ -104,9 +110,9 @@ int tcp_rcv_ofo_buffer_add_packet(struct tcp_sock *tsk, struct tcp_cb *cb)
 	init_list_head(&buf->list);
 
 	struct rcv_ofo_buf_entry *pos, *q;
-	if(list_empty(&tsk->rcv_ofo_buf))
+	if(list_empty(&tsk->rcv_ofo_buf) || buf->seq == tsk->rcv_nxt)
 	{
-		list_add_tail(&buf->list, &tsk->rcv_ofo_buf);
+		list_add_head(&buf->list, &tsk->rcv_ofo_buf);
 	}
 	else
 	{
