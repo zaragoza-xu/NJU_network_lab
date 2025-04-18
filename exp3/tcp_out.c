@@ -24,6 +24,101 @@ void tcp_init_hdr(struct tcphdr *tcp, u16 sport, u16 dport, u32 seq, u32 ack,
 	tcp->rwnd = htons(rwnd);
 }
 
+/*
+创建send_buffer_entry加入send_buf尾部
+
+注意上锁，后面不再强调。
+*/
+void tcp_send_buffer_add_packet(struct tcp_sock *tsk, char *packet, int len)
+{
+	log(DEBUG, "add: attempt to acquire send_buf_lock");
+	pthread_mutex_lock(&tsk->send_buf_lock);
+	log(DEBUG, "add: send_buf_lock acquired");
+	struct send_buf_entry *buf = malloc(sizeof(struct send_buf_entry) + len + 1);
+
+	memcpy(buf->data, packet, len);
+	buf->len = len;
+	init_list_head(&buf->list);
+	list_add_tail(&buf->list, &tsk->send_buf);
+
+	pthread_mutex_unlock(&tsk->send_buf_lock);
+	log(DEBUG, "add: send_buf_lock released");
+
+	tcp_set_retrans_timer(tsk);
+}
+
+/*
+基于收到的ACK包，遍历发送队列，将已经接收的数据包从队列中移除
+
+提取报文的tcp头可以使用packet_to_tcp_hdr，注意报文中的字段是大端序
+return -1 on error, 0 on normal
+*/
+int tcp_update_send_buffer(struct tcp_sock *tsk, u32 ack)
+{
+	log(DEBUG, "update: attempt to acquire send_buf_lock");
+	pthread_mutex_lock(&tsk->send_buf_lock);
+	log(DEBUG, "update: send_buf_lock acquired");
+	struct send_buf_entry *pos, *q;
+	log(DEBUG, "empty %d", list_empty(&tsk->send_buf));
+	list_for_each_entry_safe(pos, q, &tsk->send_buf, list)
+	{
+		u32 packet_seq = ntohl(packet_to_tcp_hdr(pos->data)->seq);
+		log(DEBUG, "packet seq %d, cur ack %d", packet_seq, ack);
+		if(packet_seq <= ack)
+		{
+			list_delete_entry(&pos->list);
+			free(pos);
+		}
+		else
+			break;
+	}
+	pthread_mutex_unlock(&tsk->send_buf_lock);
+	log(DEBUG, "update: send_buf_lock released");
+
+	tcp_update_retrans_timer(tsk);
+	return 0;
+}
+
+/*
+获取重传队列第一个包，修改ack号和checksum并通过ip_send_packet发送。
+
+注意不要更新snd_nxt之类的参数，这是一个独立的重传报文。ip_send_packet会释放传入的指针，因而需要拷贝需要重传的报文。
+return -1 on error, 0 on normal
+*/
+int tcp_retrans_send_buffer(struct tcp_sock *tsk)
+{
+	log(DEBUG, "retrans: attempt to acquire send_buf_lock");
+	pthread_mutex_lock(&tsk->send_buf_lock);
+	log(DEBUG, "retrans: send_buf_lock acquired");
+	struct send_buf_entry *buf;
+	if(list_empty(&tsk->send_buf))
+	{
+		pthread_mutex_unlock(&tsk->send_buf_lock);
+		log(DEBUG, "retrans: send_buf_lock released");
+		return -1;
+	}
+		
+
+	buf = list_entry(tsk->send_buf.next, struct send_buf_entry, list);
+
+	struct send_buf_entry *packet = malloc(sizeof(struct send_buf_entry) + buf->len + 1);
+	log(DEBUG, "retrans: malloc succeed");
+	memcpy(packet, buf, sizeof(*packet));
+
+	struct iphdr *ip = packet_to_ip_hdr(packet->data);
+	struct tcphdr *tcp = packet_to_tcp_hdr(packet->data);
+	tcp->ack = htonl(tsk->rcv_nxt);
+	tcp->rwnd = htons(tsk->rcv_wnd);
+
+	tcp->checksum = tcp_checksum(ip, tcp);
+	log(DEBUG, "retrans: retrans packet %d", tcp->seq);
+	ip_send_packet(packet->data, packet->len);
+
+	pthread_mutex_unlock(&tsk->send_buf_lock);
+	log(DEBUG, "retrans: send_buf_lock released");
+	return 0;
+}
+
 // send a tcp packet
 //
 // Given that the payload of the tcp packet has been filled, initialize the tcp 
@@ -57,6 +152,9 @@ void tcp_send_packet(struct tcp_sock *tsk, char *packet, int len)
 
 	ip_send_packet(packet, len);
 
+	log(DEBUG, "add packet %d", seq);
+	tcp_send_buffer_add_packet(tsk, packet, len);
+
 }
 
 // send a tcp control packet
@@ -86,12 +184,14 @@ void tcp_send_control_packet(struct tcp_sock *tsk, u8 flags)
 
 		tcp->checksum = tcp_checksum(ip, tcp);
 		
-		if (flags & (TCP_SYN|TCP_FIN))
-			tsk->snd_nxt += 1;
-
 		ip_send_packet(packet, pkt_size);
-	}
 
+		if (flags & (TCP_SYN|TCP_FIN))
+		{
+			tsk->snd_nxt += 1;
+			tcp_send_buffer_add_packet(tsk, packet, 1);
+		}
+	}
 }
 
 // send tcp reset packet

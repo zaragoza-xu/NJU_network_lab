@@ -22,6 +22,20 @@ struct sock_addr {
 	u16 port;
 } __attribute__((packed));
 
+struct send_buf_entry
+{
+	struct list_head list;
+	u32 len;
+	char data[0];
+};
+
+struct rcv_ofo_buf_entry
+{
+	struct list_head list;
+	u32 len, seq, seq_end;
+	char data[0];
+};
+
 // the main structure that manages a connection locally
 struct tcp_sock {
 	// sk_ip, sk_sport, sk_sip, sk_dport are the 4-tuple that represents a 
@@ -71,6 +85,7 @@ struct tcp_sock {
 
 	// used for timeout retransmission
 	struct tcp_timer retrans_timer;
+	u32 rto; 
 
 	// synch waiting structure of *connect*, *accept*, *recv*, and *send*
 	struct synch_wait *wait_connect;
@@ -83,6 +98,7 @@ struct tcp_sock {
 	
 	pthread_mutex_t rcv_buf_lock;
 	pthread_mutex_t send_buf_lock;
+	pthread_mutex_t rcv_ofo_buf_lock;
 
 	// receiving buffer
 	struct ring_buffer *rcv_buf;
@@ -144,6 +160,8 @@ u32 tcp_new_iss();
 void tcp_send_reset(struct tcp_cb *cb);
 
 void tcp_init_hdr(struct tcphdr *tcp, u16 sport, u16 dport, u32 seq, u32 ack, u8 flags, u16 rwnd);
+int tcp_update_send_buffer(struct tcp_sock *tsk, u32 ack);
+int tcp_retrans_send_buffer(struct tcp_sock *tsk);
 void tcp_send_control_packet(struct tcp_sock *tsk, u8 flags);
 void tcp_send_packet(struct tcp_sock *tsk, char *packet, int len);
 int tcp_send_data(struct tcp_sock *tsk, char *buf, int len);
