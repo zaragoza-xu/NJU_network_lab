@@ -34,11 +34,15 @@ void tcp_send_buffer_add_packet(struct tcp_sock *tsk, char *packet, int len)
 	log(DEBUG, "add: attempt to acquire send_buf_lock");
 	pthread_mutex_lock(&tsk->send_buf_lock);
 	log(DEBUG, "add: send_buf_lock acquired");
+	
 	struct send_buf_entry *buf = malloc(sizeof(struct send_buf_entry) + len + 1);
-
+	memset(buf, 0, sizeof(struct send_buf_entry) + len + 1);
+//	log(DEBUG, "%d", packet_to_tcp_hdr(packet)->seq);
 	memcpy(buf->data, packet, len);
-	buf->len = len;
 	init_list_head(&buf->list);
+	buf->len = len;
+	
+//	log(DEBUG, "malloc %lu bytes, add packet %d", sizeof(struct send_buf_entry) + len + 1, ntohl(packet_to_tcp_hdr(buf->data)->seq));
 	list_add_tail(&buf->list, &tsk->send_buf);
 
 	pthread_mutex_unlock(&tsk->send_buf_lock);
@@ -64,18 +68,16 @@ int tcp_update_send_buffer(struct tcp_sock *tsk, u32 ack)
 	{
 		u32 packet_seq = ntohl(packet_to_tcp_hdr(pos->data)->seq);
 		log(DEBUG, "packet seq %d, cur ack %d", packet_seq, ack);
-		if(packet_seq <= ack)
+		if(packet_seq < ack)
 		{
 			list_delete_entry(&pos->list);
 			free(pos);
+			tcp_update_retrans_timer(tsk);
 		}
-		else
-			break;
 	}
 	pthread_mutex_unlock(&tsk->send_buf_lock);
 	log(DEBUG, "update: send_buf_lock released");
 
-	tcp_update_retrans_timer(tsk);
 	return 0;
 }
 
@@ -101,18 +103,18 @@ int tcp_retrans_send_buffer(struct tcp_sock *tsk)
 
 	buf = list_entry(tsk->send_buf.next, struct send_buf_entry, list);
 
-	struct send_buf_entry *packet = malloc(sizeof(struct send_buf_entry) + buf->len + 1);
+	char *packet = malloc(buf->len);
 	log(DEBUG, "retrans: malloc succeed");
-	memcpy(packet, buf, sizeof(*packet));
+	memcpy(packet, buf->data, buf->len);
 
-	struct iphdr *ip = packet_to_ip_hdr(packet->data);
-	struct tcphdr *tcp = packet_to_tcp_hdr(packet->data);
+	struct iphdr *ip = packet_to_ip_hdr(packet);
+	struct tcphdr *tcp = packet_to_tcp_hdr(packet);
 	tcp->ack = htonl(tsk->rcv_nxt);
 	tcp->rwnd = htons(tsk->rcv_wnd);
 
 	tcp->checksum = tcp_checksum(ip, tcp);
-	log(DEBUG, "retrans: retrans packet %d", tcp->seq);
-	ip_send_packet(packet->data, packet->len);
+	log(DEBUG, "retrans: retrans packet %u", ntohl(tcp->seq));
+	ip_send_packet(packet, buf->len);
 
 	pthread_mutex_unlock(&tsk->send_buf_lock);
 	log(DEBUG, "retrans: send_buf_lock released");
@@ -150,10 +152,10 @@ void tcp_send_packet(struct tcp_sock *tsk, char *packet, int len)
 
 	tsk->snd_nxt += tcp_data_len;
 
-	ip_send_packet(packet, len);
-
-	log(DEBUG, "add packet %d", seq);
+	log(DEBUG, "add packet %d", ntohl(tcp->seq));
 	tcp_send_buffer_add_packet(tsk, packet, len);
+
+	ip_send_packet(packet, len);
 
 }
 
@@ -184,13 +186,13 @@ void tcp_send_control_packet(struct tcp_sock *tsk, u8 flags)
 
 		tcp->checksum = tcp_checksum(ip, tcp);
 		
-		ip_send_packet(packet, pkt_size);
-
 		if (flags & (TCP_SYN|TCP_FIN))
 		{
 			tsk->snd_nxt += 1;
-			tcp_send_buffer_add_packet(tsk, packet, 1);
+			tcp_send_buffer_add_packet(tsk, packet, pkt_size);
 		}
+
+		ip_send_packet(packet, pkt_size);
 	}
 }
 
