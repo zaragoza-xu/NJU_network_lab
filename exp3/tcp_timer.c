@@ -164,7 +164,8 @@ void tcp_update_retrans_timer(struct tcp_sock *tsk)
 	}
 	else
 	{
-		tcp_set_retrans_timer(tsk);
+		tsk->retrans_timer.timeout = tsk->rto;
+		tsk->retrans_timer.retrans_cnt = 0;
 	}
 }
 
@@ -223,7 +224,7 @@ void tcp_scan_timer_list()
 				log(DEBUG, "retrans timer up");
 				tcp_retrans_send_buffer(tsk);
 				i->retrans_cnt ++;
-				i->timeout = (tsk->rto *= 2);
+				i->timeout = tsk->rto;
 			}
 			break;
 
