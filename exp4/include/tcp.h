@@ -65,6 +65,8 @@ enum tcp_state { TCP_CLOSED, TCP_LISTEN, TCP_SYN_RECV, TCP_SYN_SENT, \
 	TCP_ESTABLISHED, TCP_CLOSE_WAIT, TCP_LAST_ACK, TCP_FIN_WAIT_1, \
 	TCP_FIN_WAIT_2, TCP_CLOSING, TCP_TIME_WAIT };
 
+enum tcp_c_state { SLOW_START, CONGEST_AVOID, FAST_RECOVERY };
+
 static inline struct tcphdr *packet_to_tcp_hdr(char *packet)
 {
 	struct iphdr *ip = packet_to_ip_hdr(packet);

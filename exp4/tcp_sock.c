@@ -267,8 +267,8 @@ void tcp_unhash(struct tcp_sock *tsk)
 // test if available send wnd > MSS, return 0 if not
 int tcp_tx_window_test(struct tcp_sock *tsk)
 {
-	//printf("%d %d %d\n", tsk->snd_una , tsk->snd_wnd , tsk->snd_nxt);
-	if(tsk->snd_una + tsk->snd_wnd - tsk->snd_nxt >= TCP_MSS)
+	log(DEBUG, "snd_una %d, snd_wnd %d, snd_nxt %d\n", tsk->snd_una , tsk->snd_wnd , tsk->snd_nxt);
+	if(greater_or_equal_32b(tsk->snd_una + tsk->snd_wnd - tsk->snd_nxt, TCP_MSS))
 		return 1;
 	return 0;
 }

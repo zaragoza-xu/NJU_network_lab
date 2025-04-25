@@ -223,6 +223,10 @@ void tcp_scan_timer_list()
 			{
 				log(DEBUG, "retrans timer up");
 				tcp_retrans_send_buffer(tsk);
+				tsk->c_state = SLOW_START;
+				tsk->ssthresh = tsk->cwnd / 2;
+				tsk->cwnd = TCP_MSS;
+				tsk->dupACK_cnt = 0;
 				i->retrans_cnt ++;
 				i->timeout = tsk->rto;
 			}

@@ -109,6 +109,7 @@ struct tcp_sock {
 
 	// tcp state, see enum tcp_state in tcp.h
 	int state;
+	int c_state;
 
 	// initial sending sequence number
 	u32 iss;
@@ -134,6 +135,9 @@ struct tcp_sock {
 
 	// congestion window
 	u32 cwnd;
+
+	// duplicat ACK counter
+	u32 dupACK_cnt;
 
 	// slow start threshold
 	u32 ssthresh;

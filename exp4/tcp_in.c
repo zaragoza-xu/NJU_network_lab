@@ -6,15 +6,80 @@
 #include "ring_buffer.h"
 
 #include <stdlib.h>
+
+static inline void tcp_init_congestion(struct tcp_sock *tsk, struct tcp_cb *cb)
+{
+	tsk->c_state = SLOW_START;
+	tsk->cwnd = TCP_MSS;
+	tsk->ssthresh = 32 * 1024;
+	tsk->dupACK_cnt = 0;
+}
+
+/*新增tcp_congestion_control函数
+ 函数tcp_congestion_control根据当前TCP拥塞控制的阶段(tsk->c_state)和收到的ACK数据包信息(cb->ack和ack_valid),
+ 更新拥塞窗口cwnd,慢启动阈值ssthresh等参数.
+它通过状态机的方式处理不同的拥塞控制阶段*/
+void tcp_congestion_control(struct tcp_sock *tsk, struct tcp_cb *cb)
+{
+	switch(tsk->c_state)
+	{
+		case SLOW_START:
+		tsk->cwnd += TCP_MSS;
+		if(cb->ack > tsk->snd_una)	tsk->dupACK_cnt = 0;
+		else	tsk->dupACK_cnt ++;
+		if(tsk->cwnd > tsk->ssthresh)	tsk->c_state = CONGEST_AVOID;
+		if(tsk->dupACK_cnt >= 3)
+		{
+			tcp_retrans_send_buffer(tsk);
+			tsk->ssthresh = tsk->cwnd / 2, tsk->cwnd = tsk->ssthresh + 3 * TCP_MSS;
+			tsk->recovery_point = tsk->snd_nxt, tsk->c_state = FAST_RECOVERY;
+		}
+		break;
+
+		
+		case CONGEST_AVOID:
+		tsk->cwnd += TCP_MSS * TCP_MSS / tsk->cwnd;
+		if(cb->ack > tsk->snd_una)	tsk->dupACK_cnt = 0;
+		else	tsk->dupACK_cnt ++;
+		if(tsk->dupACK_cnt >= 3)
+		{
+			tcp_retrans_send_buffer(tsk);
+			tsk->ssthresh = tsk->cwnd / 2, tsk->cwnd = tsk->ssthresh + 3 * TCP_MSS;
+			tsk->recovery_point = tsk->snd_nxt, tsk->c_state = FAST_RECOVERY;
+		}
+		break;
+		
+		
+		case FAST_RECOVERY:
+		if(cb->ack >= tsk->recovery_point)
+		{
+			tsk->dupACK_cnt = 0, tsk->cwnd = tsk->ssthresh;
+			tsk->c_state = CONGEST_AVOID;
+		}
+		else if(cb->ack > tsk->snd_una)
+		{
+			tcp_retrans_send_buffer(tsk);
+			tsk->dupACK_cnt = 0, tsk->cwnd = tsk->ssthresh;
+		}
+		else if(cb->ack == tsk->snd_una)
+		{
+			tsk->dupACK_cnt ++, tsk->cwnd += TCP_MSS;
+		} 
+		break;
+	}
+	log(DEBUG, "cwnd %d\n", tsk->cwnd);
+}
+
 // update the snd_wnd of tcp_sock
 //
 // if the snd_wnd before updating is zero, notify tcp_sock_send (wait_send)
 static inline void tcp_update_window(struct tcp_sock *tsk, struct tcp_cb *cb)
 {
+	tcp_congestion_control(tsk, cb);
 	int old_snd_wnd = tcp_tx_window_test(tsk);
 	tsk->adv_wnd = cb->rwnd;
 	tsk->snd_una = cb->ack;
-	tsk->snd_wnd = tsk->adv_wnd;
+	tsk->snd_wnd = min(tsk->adv_wnd, tsk->cwnd);
 	log(DEBUG, "snd_una %d, snd_wnd %d, rcv_free %d, test %d", tsk->snd_una, tsk->snd_wnd, ring_buffer_free(tsk->rcv_buf), tcp_tx_window_test(tsk));
 	if(!tcp_tx_window_test(tsk))
 		tcp_set_persist_timer(tsk);
@@ -138,8 +203,8 @@ void process_data_packet(struct tcp_sock *tsk, struct tcp_cb *cb, char *packet)
 {
 	if((cb->flags & TCP_ACK) && cb->pl_len == 0)
 	{
-		tcp_update_window_safe(tsk, cb);
 		tcp_update_send_buffer(tsk, cb->ack);
+		tcp_update_window_safe(tsk, cb);
 	}
 	if(is_tcp_seq_valid(tsk, cb) != 0 && cb->pl_len > 0)
 	{
@@ -152,6 +217,21 @@ void process_data_packet(struct tcp_sock *tsk, struct tcp_cb *cb, char *packet)
 		pthread_mutex_unlock(&tsk->rcv_ofo_buf_lock);
 		log(DEBUG, "rcv_ofo_buf_lock released");
 	}
+}
+
+// cwnd 记录函数：
+void *tcp_cwnd_thread(void *arg) {
+    struct tcp_sock *tsk = (struct tcp_sock *)arg;
+    FILE *fp = fopen("cwnd.txt", "w");
+
+    int time_us = 0;
+    while (tsk->state == TCP_ESTABLISHED && time_us < 10000000) {
+        usleep(400); // 每500us唤醒一次，按需更改
+        time_us += 400;
+        fprintf(fp, "%d %d %u %u\n", time_us, tsk->cwnd, tsk->ssthresh, tsk->adv_wnd);
+    }
+    fclose(fp);
+    return NULL;
 }
 
 // Process the incoming packet according to TCP state machine. 
@@ -201,8 +281,9 @@ void tcp_process(struct tcp_sock *tsk, struct tcp_cb *cb, char *packet)
 				child_tsk->state = TCP_ESTABLISHED;
 				tcp_hash(child_tsk);
 
-				tcp_update_window_safe(child_tsk, cb);
+				tcp_init_congestion(child_tsk, cb);
 				tcp_update_send_buffer(child_tsk, cb->ack);
+				tcp_update_window_safe(child_tsk, cb);
 				log(DEBUG, "received ACK from client. connection established.");
 				wake_up(tsk->wait_accept);
 			}
@@ -216,10 +297,16 @@ void tcp_process(struct tcp_sock *tsk, struct tcp_cb *cb, char *packet)
 		case TCP_SYN_SENT:
 		if((cb->flags | TCP_ACK) && (cb->flags | TCP_SYN))
 		{
-			tcp_update_window_safe(tsk, cb);
+			tcp_init_congestion(tsk, cb);
 			tcp_update_send_buffer(tsk, cb->ack);
+			tcp_update_window_safe(tsk, cb);
 
 			tsk->rcv_nxt = cb->seq_end;
+
+			// log cwnd
+			pthread_t cwnd_record; 
+			pthread_create(&cwnd_record, NULL, tcp_cwnd_thread, (void *)tsk);
+
 			if(wake_up(tsk->wait_connect) < 0)
 				log(ERROR, "no waiting connection.");
 			else
@@ -248,8 +335,8 @@ void tcp_process(struct tcp_sock *tsk, struct tcp_cb *cb, char *packet)
 		case TCP_LAST_ACK:
 		if(cb->flags & TCP_ACK)
 		{
-			tcp_update_window_safe(tsk, cb);
 			tcp_update_send_buffer(tsk, cb->ack);
+			tcp_update_window_safe(tsk, cb);
 			tsk->state = TCP_CLOSED;
 			log(DEBUG, "ACK received, connection closed.");
 			tcp_bind_unhash(tsk);
@@ -261,8 +348,8 @@ void tcp_process(struct tcp_sock *tsk, struct tcp_cb *cb, char *packet)
 		process_data_packet(tsk, cb, packet);
 		if((cb->flags & TCP_ACK) && cb->ack == tsk->snd_nxt)
 		{
-			tcp_update_window_safe(tsk, cb);
 			tcp_update_send_buffer(tsk, cb->ack);
+			tcp_update_window_safe(tsk, cb);
 			tsk->state = TCP_FIN_WAIT_2;
 			log(DEBUG, "ACK received, wait for FIN");
 		}
@@ -291,8 +378,8 @@ void tcp_process(struct tcp_sock *tsk, struct tcp_cb *cb, char *packet)
 		case TCP_CLOSING:
 		if((cb->flags & TCP_ACK) && cb->ack == tsk->snd_nxt)
 		{
-			tcp_update_window_safe(tsk, cb);
 			tcp_update_send_buffer(tsk, cb->ack);
+			tcp_update_window_safe(tsk, cb);
 
 			tsk->state = TCP_TIME_WAIT;
 			//wait for 2 MSL before closed
