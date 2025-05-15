@@ -9,9 +9,9 @@
 
 enum log_level { DEBUG = 0, INFO, WARNING, ERROR };
 
-static enum log_level this_log_level = DEBUG;
+static enum log_level this_log_level __attribute__((unused)) = DEBUG;
 
-static const char *log_level_str[] = { "DEBUG", "INFO", "WARNING", "ERROR" };
+static const char *log_level_str[] __attribute__((unused)) = { "DEBUG", "INFO", "WARNING", "ERROR" };
 
 #ifdef LOG_DEBUG
 	#define log_it(fmt, level_str, ...) \

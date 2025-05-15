@@ -69,7 +69,6 @@ if __name__ == '__main__':
         r.cmd('./scripts/disable_icmp.sh')
         r.cmd('./scripts/disable_ip_forward.sh')
         r.cmd('./scripts/disable_ipv6.sh')
-        r.cmd('./router &')
 
     CLI(net)
     net.stop()

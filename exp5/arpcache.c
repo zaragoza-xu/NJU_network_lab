@@ -2,6 +2,7 @@
 #include "arp.h"
 #include "ether.h"
 #include "icmp.h"
+#include "log.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -48,9 +49,22 @@ void arpcache_destroy()
 
 // look up the IP->mac mapping, need pthread_mutex_lock/unlock
 // Traverse the table to find whether there is an entry with the same IP and mac address with the given arguments.
-int arpcache_lookup(u32 ip4, u8 mac[ETH_ALEN])
+int arpcache_lookup(u32 ip4, u8 mac[])
 {
-	assert(0 && "TODO: function arpcache_lookup not implemented!");
+	pthread_mutex_lock(&arpcache.lock);
+	for(int i = 0; i < MAX_ARP_SIZE; i ++)
+	{
+		log(DEBUG, "arp cache %d %d", arpcache.entries[i].ip4, arpcache.entries[i].valid);
+		if(arpcache.entries[i].valid && ip4 == arpcache.entries[i].ip4)
+		{
+			memcpy(mac, arpcache.entries[i].mac, ETH_ALEN);
+			
+			pthread_mutex_unlock(&arpcache.lock);
+			return 1;
+		}
+	}
+	log(DEBUG, "arp cache lookup failed");
+	pthread_mutex_unlock(&arpcache.lock);
 	return 0;
 }
 
@@ -60,9 +74,48 @@ int arpcache_lookup(u32 ip4, u8 mac[ETH_ALEN])
 // If there are pending packets waiting for this mapping, fill the ethernet header for each of them, and send them out.
 // Tips:
 // arpcache_t是完整的arp缓存表，里边的req_list是一个链表，它的每个节点(用arp_req结构体封装)里又存着一个链表头，这些二级链表(节点类型是cached_pkt)缓存着相同目标ip但不知道mac地址的包
-void arpcache_insert(u32 ip4, u8 mac[ETH_ALEN])
+void arpcache_insert(u32 ip4, u8 mac[])
 {
-	assert(0 && "TODO: function arpcache_insert not implemented!");
+	pthread_mutex_lock(&arpcache.lock);
+	int inserted = 0;
+	for(int i = 0; i < MAX_ARP_SIZE; i ++)
+	{
+		if(!arpcache.entries[i].valid)
+		{
+			inserted = 1;
+			arpcache.entries[i] = (struct arp_cache_entry){.ip4 = ip4, .added = time(NULL), .valid = 1};
+			memcpy(arpcache.entries[i].mac, mac, ETH_ALEN);
+			break;
+		}
+	}
+	if(!inserted)
+	{
+		arpcache.entries[0] = (struct arp_cache_entry){.ip4 = ip4, .added = time(NULL), .valid = 1};
+		memcpy(arpcache.entries[0].mac, mac, ETH_ALEN);
+	}
+	log(DEBUG, "inserted arp cache entry %d", ip4);
+	struct arp_req *p;
+	list_for_each_entry(p, &arpcache.req_list, list)
+	{
+		if(p->ip4 == ip4 && !list_empty(&p->cached_packets))
+		{
+			struct cached_pkt *pos, *q;
+			list_for_each_entry_safe(pos, q, &p->cached_packets, list)
+			{
+				struct ether_header *eth = (struct ether_header *)pos->packet;
+				memcpy(eth->ether_dhost, mac, ETH_ALEN);
+				memcpy(eth->ether_shost, p->iface->mac, ETH_ALEN);
+				eth->ether_type = htons(ETH_P_IP);
+				
+				log(DEBUG, "sent cached packet from %s", p->iface->ip_str);
+				iface_send_packet(p->iface, pos->packet, pos->len);
+				list_delete_entry(&pos->list);
+				free(pos);
+			}
+		}
+	}
+	pthread_mutex_unlock(&arpcache.lock);
+
 }
 
 // append the packet to arpcache
@@ -73,7 +126,37 @@ void arpcache_insert(u32 ip4, u8 mac[ETH_ALEN])
 // arpcache_t是完整的arp缓存表，里边的req_list是一个链表，它的每个节点(类型是arp_req)里又存着一个链表头，这些二级链表(节点类型是cached_pkt)缓存着相同目标ip但不知道mac地址的包
 void arpcache_append_packet(iface_info_t *iface, u32 ip4, char *packet, int len)
 {
-	assert(0 && "TODO: function arpcache_append_packet not implemented!");
+	pthread_mutex_lock(&arpcache.lock);
+	struct arp_req *p;
+	int appended = 0;
+	list_for_each_entry(p, &arpcache.req_list, list)
+	{
+		if(p->ip4 == ip4)
+		{
+			struct cached_pkt *new_pkt = malloc(sizeof(struct cached_pkt));
+			new_pkt->len = len, new_pkt->packet = packet;
+			init_list_head(&new_pkt->list);
+			list_add_tail(&new_pkt->list, &p->cached_packets);
+			appended = 1;
+		}
+	}
+	if(!appended)
+	{
+		struct arp_req *new_req = malloc(sizeof(struct arp_req));
+		*new_req = (struct arp_req){.iface = iface, .ip4 = ip4, .sent = time(NULL), .retries = 0};
+		init_list_head(&new_req->cached_packets);
+		init_list_head(&new_req->list);
+		list_add_tail(&new_req->list, &arpcache.req_list);
+
+		struct cached_pkt *new_pkt = malloc(sizeof(struct cached_pkt));
+		new_pkt->len = len, new_pkt->packet = packet;
+		init_list_head(&new_pkt->list);
+		list_add_tail(&new_pkt->list, &new_req->cached_packets);
+		log(DEBUG, "create new arp_req entry");
+		arp_send_request(iface, ip4);
+	}
+	log(DEBUG, "appended packet into arpcache");
+	pthread_mutex_unlock(&arpcache.lock);
 }
 
 // sweep arpcache periodically
@@ -86,7 +169,43 @@ void *arpcache_sweep(void *arg)
 {
 	while (1) {
 		sleep(1);
-		assert(0 && "TODO: function arpcache_sweep not implemented!");
+		pthread_mutex_lock(&arpcache.lock);
+		time_t cur_time = time(NULL);
+		for(int i = 0; i < MAX_ARP_SIZE; i ++)
+		{
+			if(cur_time - arpcache.entries[i].added > 15)
+			{
+				arpcache.entries[i].valid = 0;
+			}
+		}
+		struct arp_req *p, *q;
+		list_for_each_entry_safe(p, q, &arpcache.req_list, list)
+		{
+			if(!list_empty(&p->cached_packets) && cur_time - p->sent >= 1)
+			{
+				if(p->retries < 4)
+				{
+					arp_send_request(p->iface, p->ip4);
+					p->retries ++, p->sent = cur_time;
+					log(DEBUG, "arp request retry, cnt %d", p->retries);
+				}
+				else
+				{
+					struct cached_pkt *p_pkt, *q_pkt;
+					list_for_each_entry_safe(p_pkt, q_pkt, &p->cached_packets, list)
+					{
+						pthread_mutex_unlock(&arpcache.lock);
+						icmp_send_packet(p_pkt->packet, p_pkt->len, ICMP_DEST_UNREACH, ICMP_HOST_UNREACH);
+						pthread_mutex_lock(&arpcache.lock);
+						list_delete_entry(&p_pkt->list);
+						free(p_pkt);
+					}
+					list_delete_entry(&p->list);
+					free(p);
+				}
+			}
+		}
+		pthread_mutex_unlock(&arpcache.lock);
 	}
 
 	return NULL;
