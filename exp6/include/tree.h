@@ -3,10 +3,19 @@
 
 #include <stdint.h>
 #include <stdio.h>
+#include <stdbool.h>
 
 // do not change it
 #define TEST_SIZE 100000
 
+typedef struct trie_node{
+    struct trie_node *chld[26];
+    uint32_t mask, port, ip;
+    uint32_t match_len;
+    bool terminal;
+} trie_node;
+
+extern trie_node root, root_advance;
 
 void create_tree(const char*);
 uint32_t *lookup_tree(uint32_t *);
