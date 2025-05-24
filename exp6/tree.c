@@ -3,7 +3,14 @@
 #include <stdlib.h>
 #include <string.h>
 
+#define NODE_POOL_SIZE 10000000
+trie_node node_pool[NODE_POOL_SIZE];
+int node_pool_index = 0;
 trie_node root, root_advance;
+
+trie_node* alloc_node() {
+    return &node_pool[node_pool_index++];
+}
 
 // return an array of ip represented by an unsigned integer, size is TEST_SIZE
 uint32_t* read_test_data(const char* lookup_file)
@@ -94,18 +101,6 @@ uint32_t lookup_trie(trie_node *node, uint32_t ip, uint32_t cur)
     }
     return -1;
 }
-void destroy_trie(trie_node *node)
-{
-    for(int i = 0; i < 26; i ++)
-    {
-        if(node->chld[i] != NULL)
-        {
-            destroy_trie(node->chld[i]);
-            free(node->chld[i]);
-        }
-    }
-    
-}
 // Look up the ports of ip in file `lookup_file` using the basic tree
 uint32_t *lookup_tree(uint32_t* ip_vec){
     uint32_t *res = (uint32_t *)malloc(sizeof(uint32_t) * TEST_SIZE);
@@ -115,7 +110,6 @@ uint32_t *lookup_tree(uint32_t* ip_vec){
         res[i] = lookup_trie(&root, ip_vec[i], 0);
         //printf("%d\n", res[i]);
     }
-    //destroy_trie(&root);
     return res;
 }
 
@@ -125,23 +119,28 @@ void add_trie_node_advance(trie_node *node, uint32_t cur, uint32_t ip, uint32_t 
 {
     if(cur > 30) 
         return ;
-    uint8_t bit[2] = {(ip >> (30 - cur)) & 1, (ip >> (30 - cur)) & 2};
- //   printf("%x %d %x %d %d %d\n", ip, cur, node->ip, mask, node->port, node->terminal);
-    if(node->chld[bit[0] + bit[1]] == NULL)
-        node->chld[bit[0] + bit[1]] = (trie_node *)calloc(sizeof(trie_node), 1);
-        
+    uint8_t bit = (ip >> (30 - cur)) & 3;
+    if(node->chld[bit] == NULL)
+    {
+        node->chld[bit] = alloc_node();
+        node->chld[bit]->matched_len = cur + 2, node->chld[bit]->ip = (ip >> (30 - cur)) << (30 - cur);
+        node->chld_cnt ++;
+    }
+    if (cur + 1 == mask)
+    {
+        if(node->chld[bit ^ 1] == NULL)
+        {
+            node->chld[bit ^ 1] = alloc_node();
+            node->chld_cnt ++;
+        }
+        *node->chld[bit ^ 1] = (trie_node){.matched_len = cur + 2, .ip = ip | (1 << (30 - cur)), .mask = mask, .port = port, .terminal = true};
+    }    
     if(cur + 2 >= mask)
     {
-        if (cur + 2 > mask)
-        {
-            if(node->chld[!bit[0] + bit[1]] == NULL)
-                node->chld[!bit[0] + bit[1]] = (trie_node *)calloc(sizeof(trie_node), 1);
-            *node->chld[!bit[0] + bit[1]] = (trie_node){.ip = ip, .mask = mask, .port = port, .terminal = true};
-        }
-        *node->chld[bit[0] + bit[1]] = (trie_node){.ip = ip, .mask = mask, .port = port, .terminal = true};
+        *node->chld[bit] = (trie_node){.matched_len = cur + 2, .ip = ip, .mask = mask, .port = port, .terminal = true};
         return ;
     }
-    add_trie_node_advance(node->chld[bit[0] + bit[1]], cur + 2, ip, mask, port);
+    add_trie_node_advance(node->chld[bit], cur + 2, ip, mask, port);
 }
 // Constructing an advanced trie-tree to lookup according to `forwardingtable_filename`
 void create_tree_advance(const char* forward_file){
@@ -163,34 +162,55 @@ void create_tree_advance(const char* forward_file){
 }
 
 
-
-uint32_t lookup_trie_advance(trie_node *node, uint32_t ip, uint32_t cur)
+int lookup_trie_advance(uint32_t ip)
+{
+    int cur = 0, match = -1;
+    trie_node *node = &root_advance;
+    while(cur <= 30 && node != NULL)
+    {
+        register uint32_t bit = (ip >> (32 - cur - 2)) & 3;
+        if(node->terminal && cur >= node->mask)
+        {
+            match = node->port;
+        }
+        if(node->chld[bit] == NULL)
+            break;
+        cur += 2, node = node->chld[bit];
+    }
+    return match;
+}
+/*
+int lookup_trie_advance(trie_node *node, uint32_t ip, int cur)
 {
     if(cur > 30)
         return -1;
-    int bit = (ip >> (30 - cur)) & 3;
-
-    //printf("%x %d %x %d %d %d\n", ip, cur, node->ip, node->mask, node->port, node->terminal);
-
+    uint32_t bit = (ip >> (32 - cur - 2)) & 3;
+    
+    //printf("%x %d %d %x %d %d %d\n", ip, cur, node->matched_len, node->ip, node->mask, node->port, node->terminal);
     if(node->chld[bit] != NULL)
     {
-        uint32_t log = lookup_trie_advance(node->chld[bit], ip, cur + 2);
-        if(log != -1)
-            return log;
+        register uint32_t rsft = (32 - node->chld[bit]->matched_len);
+        if((ip >> rsft) == (node->chld[bit]->ip >> rsft))
+        {
+            int log = lookup_trie_advance(node->chld[bit], ip, node->chld[bit]->matched_len);
+            if(log != -1)
+                return log;
+        }
     }
-    if(cur >= node->mask && node->terminal)
+
+    if(node->terminal && cur >= node->mask)
     {
         return node->port;
     }
     return -1;
-}
+}*/
 // Look up the ports of ip in file `lookup_file` using the advanced tree
+uint32_t res[TEST_SIZE];
 uint32_t *lookup_tree_advance(uint32_t* ip_vec){
-    uint32_t *res = (uint32_t *)malloc(sizeof(uint32_t) * TEST_SIZE);
+    
     for(int i = 0; i < TEST_SIZE; i ++)
     {
-        res[i] = lookup_trie_advance(&root_advance, ip_vec[i], 0);
-
+        res[i] = lookup_trie_advance(ip_vec[i]);
     }
     return res;
 }

@@ -9,9 +9,9 @@
 #define TEST_SIZE 100000
 
 typedef struct trie_node{
-    struct trie_node *chld[26];
+    struct trie_node *chld[4];
     uint32_t mask, port, ip;
-    uint32_t match_len;
+    int cmp_len, chld_cnt, matched_len;
     bool terminal;
 } trie_node;
 
