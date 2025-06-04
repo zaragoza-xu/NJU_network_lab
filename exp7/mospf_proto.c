@@ -1,5 +1,6 @@
 #include "mospf_proto.h"
 #include "base.h"
+#include <sys/time.h>
 #include <arpa/inet.h>
 
 extern ustack_t *instance;
@@ -12,6 +13,7 @@ void mospf_init_hdr(struct mospf_hdr *mospf, u8 type, u16 len, u32 rid, u32 aid)
 	mospf->rid = htonl(rid);
 	mospf->aid = htonl(aid);
 	mospf->padding = 0;
+	mospf->checksum = mospf_checksum(mospf);
 }
 
 void mospf_init_hello(struct mospf_hello *hello, u32 mask)
@@ -23,6 +25,7 @@ void mospf_init_hello(struct mospf_hello *hello, u32 mask)
 
 void mospf_init_lsu(struct mospf_lsu *lsu, u32 nadv)
 {
+	instance->sequence_num ++;
 	lsu->seq = htons(instance->sequence_num);
 	lsu->unused = 0;
 	lsu->ttl = MOSPF_MAX_LSU_TTL;

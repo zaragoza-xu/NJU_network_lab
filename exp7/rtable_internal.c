@@ -172,5 +172,5 @@ void read_kernel_rtable(struct list_head *rtable)
 	int len = get_unparsed_route_info(buf, ROUTE_BATCH_SIZE);
 	int n = parse_routing_info(rtable, buf, len);
 
-	fprintf(stdout, "Routing table of %d entries has been loaded.\n", n);
+//	fprintf(stdout, "Routing table of %d entries has been loaded.\n", n);
 }

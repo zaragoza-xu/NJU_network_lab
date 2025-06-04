@@ -18,12 +18,15 @@ typedef struct {
 	int flags;				// flags (could be omitted here)
 	char if_name[16];		// name of the interface
 	iface_info_t *iface;	// pointer to the interface structure
+	
+	u32 dis;
 } rt_entry_t;
 
 extern struct list_head rtable;
+extern pthread_mutex_t rt_lock;
 
 void init_rtable();
-void load_static_rtable();
+void load_rtable(struct list_head *new_rtable);
 void clear_rtable();
 void add_rt_entry(rt_entry_t *entry);
 void remove_rt_entry(rt_entry_t *entry);
@@ -34,5 +37,6 @@ rt_entry_t *longest_prefix_match(u32 ip);
 u32 get_next_hop(rt_entry_t *entry, u32 dst);
 
 void load_rtable_from_kernel();
+void read_kernel_rtable(struct list_head *rtable);
 
 #endif

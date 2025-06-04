@@ -31,7 +31,7 @@ void icmp_send_packet(const char *in_pkt, int len, u8 type, u8 code)
 		out_icmp->code = code, out_icmp->type = type;
 		out_icmp->checksum = icmp_checksum(out_icmp, len - HDR_SIZE(in_ip));
 
-		log(DEBUG, "icmp echoreply");
+		//log(DEBUG, "icmp echoreply");
 		ip_send_packet(out_pkt, len);
 		break;
 //--------------------------------------------------------------
@@ -51,14 +51,14 @@ void icmp_send_packet(const char *in_pkt, int len, u8 type, u8 code)
 		out_icmp->icmp_identifier = out_icmp->icmp_sequence = 0;
 		out_icmp->checksum = icmp_checksum(out_icmp, out_pkt_len - HDR_SIZE(in_ip));
 		//log(DEBUG, "icmp checksum %x %ld, %ld", out_icmp->checksum, out_pkt_len - HDR_SIZE(in_ip);
-		log(DEBUG, "icmp dest unreach");
+		//log(DEBUG, "icmp dest %x unreach", ntohl(out_ip->daddr));
 		
 		ip_send_packet(out_pkt, out_pkt_len);
 		break;
 
 		
 		default:
-		log(DEBUG, "undefined");
+		//log(DEBUG, "undefined");
 
 	}
 

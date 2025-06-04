@@ -6,6 +6,7 @@
 #include "log.h"
 #include <stdlib.h>
 #include <assert.h>
+#include <pthread.h>
 
 // initialize ip header 
 void ip_init_hdr(struct iphdr *ip, u32 saddr, u32 daddr, u16 len, u8 proto)
@@ -29,8 +30,10 @@ void ip_init_hdr(struct iphdr *ip, u32 saddr, u32 daddr, u16 len, u8 proto)
 // rtable is a global variable defined in rtable.c
 rt_entry_t *longest_prefix_match(u32 dst)
 {
+	pthread_mutex_lock(&rt_lock);
 	rt_entry_t *p, *match = NULL;
 	int longest_mask = 0;
+	
 	list_for_each_entry(p, &rtable, list)
 	{
 		if((p->dest & p->mask) == (dst & p->mask) && p->mask > longest_mask)
@@ -38,6 +41,7 @@ rt_entry_t *longest_prefix_match(u32 dst)
 			match = p, longest_mask = p->mask;
 		}
 	}
+	pthread_mutex_unlock(&rt_lock);
 	return match;
 }
 
@@ -52,10 +56,10 @@ void ip_send_packet(char *packet, int len)
 	rt_entry_t *nxt_hop = longest_prefix_match(dst);
 	if(nxt_hop == NULL)
 	{
-		log(DEBUG, "icmp packet route not found");
+		//log(DEBUG, "icmp packet route not found");
 		return ;
 	}
-	log(DEBUG, "send icmp from %s to %x , gw %x", nxt_hop->iface->ip_str, ntohl(ip->saddr), nxt_hop->gw);
+	//log(DEBUG, "send icmp from %s to %x , gw %x", nxt_hop->iface->ip_str, ntohl(ip->saddr), nxt_hop->gw);
 	if(nxt_hop->gw == 0)
 	{
 		ip_init_hdr(ip, nxt_hop->iface->ip, dst, ntohs(ip->tot_len), IPPROTO_ICMP);
@@ -66,4 +70,35 @@ void ip_send_packet(char *packet, int len)
 		ip_init_hdr(ip, nxt_hop->iface->ip, dst, ntohs(ip->tot_len), IPPROTO_ICMP);
 		iface_send_packet_by_arp(nxt_hop->iface, nxt_hop->gw, packet, len);
 	}
+}
+
+void ip_forward_packet(u32 ip_dst, char *packet, int len)
+{
+	//log(DEBUG, "forwarding ip/icmp packet");
+	struct iphdr *ip = packet_to_ip_hdr(packet);
+	ip->ttl --;
+	if(ip->ttl == 0)
+	{
+		icmp_send_packet(packet, len, ICMP_TIME_EXCEEDED, 0);
+		return ;
+	}
+	ip->checksum = ip_checksum(ip);
+
+	rt_entry_t *nxt_hop = longest_prefix_match(ip_dst);
+	if(nxt_hop == NULL)
+	{
+		
+		icmp_send_packet(packet, len, ICMP_DEST_UNREACH, ICMP_NET_UNREACH);
+		return ;
+	}
+
+	if(nxt_hop->gw == 0)
+	{
+		iface_send_packet_by_arp(nxt_hop->iface, ip_dst, packet, len);
+	}
+	else
+	{
+		iface_send_packet_by_arp(nxt_hop->iface, nxt_hop->gw, packet, len);
+	}
+
 }

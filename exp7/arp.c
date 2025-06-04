@@ -4,6 +4,7 @@
 #include "ether.h"
 #include "arpcache.h"
 #include "log.h"
+#include "mospf_proto.h"
 #include <stdlib.h>
 #include <string.h>
 #include <assert.h>
@@ -24,7 +25,7 @@ void arp_init_hdr(iface_info_t *iface, u32 dst_ip, u8 dst_mac[], int op, char *p
 // Encapsulate an arp reply packet, send it out through iface_send_packet.
 void arp_send_reply(iface_info_t *iface, struct ether_arp *req_hdr)
 {
-	log(DEBUG, "send arp reply");
+//	log(DEBUG, "send arp reply");
 	char *packet = malloc(ETHER_HDR_SIZE + sizeof(struct ether_arp));
 
 	struct ether_header *eth = (void *)packet;
@@ -41,7 +42,7 @@ void arp_send_reply(iface_info_t *iface, struct ether_arp *req_hdr)
 // Encapsulate an arp request packet, send it out through iface_send_packet.
 void arp_send_request(iface_info_t *iface, u32 dst_ip)
 {
-	log(DEBUG, "send arp request from %s", iface->ip_str);
+//	log(DEBUG, "send arp request from %s", iface->ip_str);
 	char *packet = malloc(ETHER_HDR_SIZE + sizeof(struct ether_arp));
 
 	struct ether_header *eth = (void *)packet;
@@ -66,6 +67,7 @@ void arp_send_request(iface_info_t *iface, u32 dst_ip)
 void handle_arp_packet(iface_info_t *iface, char *packet, int len)
 {
 	struct ether_arp *arp = packet_to_ether_arp(packet);
+//	log(DEBUG, "%s received arp packet, type %d", iface->ip_str, ntohs(arp->arp_op));
 	if(ntohl(arp->arp_tpa) != iface->ip)
 	{
 		free(packet);
@@ -73,13 +75,13 @@ void handle_arp_packet(iface_info_t *iface, char *packet, int len)
 	}
 	if(ntohs(arp->arp_op) == ARPOP_REQUEST)
 	{
-		log(DEBUG, "%s received arp request", iface->ip_str);
+//		log(DEBUG, "%s received arp request", iface->ip_str);
 		arpcache_insert(ntohl(arp->arp_spa), arp->arp_sha);
 		arp_send_reply(iface, arp);
 	}
 	if(ntohs(arp->arp_op) == ARPOP_REPLY)
 	{
-		log(DEBUG, "%s received arp reply", iface->ip_str);
+//		log(DEBUG, "%s received arp reply", iface->ip_str);
 		arpcache_insert(ntohl(arp->arp_spa), arp->arp_sha);
 	}
 	free(packet);
@@ -92,14 +94,23 @@ void handle_arp_packet(iface_info_t *iface, char *packet, int len)
 void iface_send_packet_by_arp(iface_info_t *iface, u32 dst_ip, char *packet, int len)
 {
 	u8 dst_mac[ETH_ALEN];
-	if(arpcache_lookup(dst_ip, dst_mac) == 0)
+	if(dst_ip == MOSPF_ALLSPFRouters)
+	{
+		memcpy(dst_mac, (u8[ETH_ALEN]){
+            0x01, 0x00, 0x5e,
+            (u8)(((dst_ip >> 16) & 0xff) & 0x7f), 
+            (u8)((dst_ip >> 8) & 0xff),           
+            (u8)(dst_ip & 0xff)                   
+        }, ETH_ALEN);
+	}
+	else if(arpcache_lookup(dst_ip, dst_mac) == 0)
 	{
 		// pend
-		log(DEBUG, "pend for arp request");
+//		log(DEBUG, "pend dest %x for arp request", dst_ip);
 		arpcache_append_packet(iface, dst_ip, packet, len);
 		return ;
 	}
-	log(DEBUG, "iface sent packet from %s to %x by arp", iface->ip_str, dst_ip);
+//	log(DEBUG, "iface sent packet from %s to %x by arp", iface->ip_str, dst_ip);
 	struct ether_header *eth = (struct ether_header *)packet;
 	memcpy(eth->ether_dhost, dst_mac, ETH_ALEN);
 	memcpy(eth->ether_shost, iface->mac, ETH_ALEN);

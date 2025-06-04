@@ -28,7 +28,7 @@ struct mospf_hdr {
 	u32		aid;
 	u16		checksum;
 	u16		padding;
-}__attribute__ ((packed));
+};
 #define MOSPF_HDR_SIZE sizeof(struct mospf_hdr)
 
 struct mospf_hello {

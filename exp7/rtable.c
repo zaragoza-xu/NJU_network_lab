@@ -90,6 +90,7 @@ void print_rtable()
 	pthread_mutex_unlock(&rt_lock);
 
 	fprintf(stdout, "--------------------------------------\n");
+	fflush(stdout);
 }
 
 void load_rtable_from_kernel()

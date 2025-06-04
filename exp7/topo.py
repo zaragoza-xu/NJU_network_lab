@@ -3,6 +3,7 @@
 import os
 import sys
 import glob
+import argparse
 
 from mininet.topo import Topo
 from mininet.net import Mininet
@@ -47,6 +48,10 @@ class MOSPFTopo(Topo):
 
 if __name__ == '__main__':
     check_scripts()
+
+    parser = argparse.ArgumentParser(description="Mininet MOSPFTopo script")
+    parser.add_argument('--script', help='Path to a script to run in Mininet CLI')
+    args = parser.parse_args()
 
     topo = MOSPFTopo()
     net = Mininet(topo = topo, controller = None) 

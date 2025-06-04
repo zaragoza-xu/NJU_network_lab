@@ -54,7 +54,6 @@ int arpcache_lookup(u32 ip4, u8 mac[])
 	pthread_mutex_lock(&arpcache.lock);
 	for(int i = 0; i < MAX_ARP_SIZE; i ++)
 	{
-		log(DEBUG, "arp cache %d %d", arpcache.entries[i].ip4, arpcache.entries[i].valid);
 		if(arpcache.entries[i].valid && ip4 == arpcache.entries[i].ip4)
 		{
 			memcpy(mac, arpcache.entries[i].mac, ETH_ALEN);
@@ -63,7 +62,7 @@ int arpcache_lookup(u32 ip4, u8 mac[])
 			return 1;
 		}
 	}
-	log(DEBUG, "arp cache lookup failed");
+//	log(DEBUG, "arp cache lookup failed");
 	pthread_mutex_unlock(&arpcache.lock);
 	return 0;
 }
@@ -93,9 +92,9 @@ void arpcache_insert(u32 ip4, u8 mac[])
 		arpcache.entries[0] = (struct arp_cache_entry){.ip4 = ip4, .added = time(NULL), .valid = 1};
 		memcpy(arpcache.entries[0].mac, mac, ETH_ALEN);
 	}
-	log(DEBUG, "inserted arp cache entry %d", ip4);
-	struct arp_req *p;
-	list_for_each_entry(p, &arpcache.req_list, list)
+//	log(DEBUG, "inserted arp cache entry %d", ip4);
+	struct arp_req *p, *pq;
+	list_for_each_entry_safe(p, pq, &arpcache.req_list, list)
 	{
 		if(p->ip4 == ip4 && !list_empty(&p->cached_packets))
 		{
@@ -107,11 +106,13 @@ void arpcache_insert(u32 ip4, u8 mac[])
 				memcpy(eth->ether_shost, p->iface->mac, ETH_ALEN);
 				eth->ether_type = htons(ETH_P_IP);
 				
-				log(DEBUG, "sent cached packet from %s", p->iface->ip_str);
+//				log(DEBUG, "sent cached packet from %s", p->iface->ip_str);
 				iface_send_packet(p->iface, pos->packet, pos->len);
 				list_delete_entry(&pos->list);
 				free(pos);
 			}
+			list_delete_entry(&p->list);
+			free(p);
 		}
 	}
 	pthread_mutex_unlock(&arpcache.lock);
@@ -129,6 +130,7 @@ void arpcache_append_packet(iface_info_t *iface, u32 ip4, char *packet, int len)
 	pthread_mutex_lock(&arpcache.lock);
 	struct arp_req *p;
 	int appended = 0;
+	if(!list_empty(&arpcache.req_list))
 	list_for_each_entry(p, &arpcache.req_list, list)
 	{
 		if(p->ip4 == ip4)
@@ -152,10 +154,10 @@ void arpcache_append_packet(iface_info_t *iface, u32 ip4, char *packet, int len)
 		new_pkt->len = len, new_pkt->packet = packet;
 		init_list_head(&new_pkt->list);
 		list_add_tail(&new_pkt->list, &new_req->cached_packets);
-		log(DEBUG, "create new arp_req entry");
+		//log(DEBUG, "create new arp_req entry");
 		arp_send_request(iface, ip4);
 	}
-	log(DEBUG, "appended packet into arpcache");
+	//log(DEBUG, "appended packet into arpcache");
 	pthread_mutex_unlock(&arpcache.lock);
 }
 
@@ -173,12 +175,13 @@ void *arpcache_sweep(void *arg)
 		time_t cur_time = time(NULL);
 		for(int i = 0; i < MAX_ARP_SIZE; i ++)
 		{
-			if(cur_time - arpcache.entries[i].added > 15)
+			if(cur_time - arpcache.entries[i].added > ARP_ENTRY_TIMEOUT)
 			{
 				arpcache.entries[i].valid = 0;
 			}
 		}
 		struct arp_req *p, *q;
+		if(!list_empty(&arpcache.req_list))
 		list_for_each_entry_safe(p, q, &arpcache.req_list, list)
 		{
 			if(!list_empty(&p->cached_packets) && cur_time - p->sent >= 1)
@@ -187,7 +190,7 @@ void *arpcache_sweep(void *arg)
 				{
 					arp_send_request(p->iface, p->ip4);
 					p->retries ++, p->sent = cur_time;
-					log(DEBUG, "arp request retry, cnt %d", p->retries);
+					//log(DEBUG, "arp request retry, cnt %d", p->retries);
 				}
 				else
 				{
