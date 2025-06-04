@@ -1,0 +1,9 @@
+py print('在每个路由器上关闭 tcpdump...')
+r1 killall tcpdump
+r1 killall mospfd
+r2 killall tcpdump
+r2 killall mospfd
+r3 killall tcpdump
+r3 killall mospfd
+r4 killall tcpdump
+r4 killall mospfd
