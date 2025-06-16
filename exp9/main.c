@@ -16,10 +16,32 @@
 void handle_packet(iface_info_t *iface, char *packet, int len)
 {
 	// TODO: implement the packet forwarding process here
-	fprintf(stdout, "TODO: implement the packet forwarding process here.\n");
-
 	struct ether_header *eh = (struct ether_header *)packet;
-	log(DEBUG, "the dst mac address is " ETHER_STRING ".\n", ETHER_FMT(eh->ether_dhost));
+	u8 *src_mac = eh->ether_shost;
+	u8 *dst_mac = eh->ether_dhost;
+
+	insert_mac_port(src_mac, iface);
+
+	const u8 broadcast_addr[] = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
+	if(!memcmp(dst_mac, broadcast_addr, ETH_ALEN))
+	{
+		broadcast_packet(iface, packet, len);
+	}
+	else
+	{
+		iface_info_t *tx_iface = lookup_port(dst_mac);
+		if(tx_iface == NULL)
+		{
+			broadcast_packet(iface, packet, len);
+		}
+		else if(tx_iface != iface)
+		{
+			iface_send_packet(tx_iface, packet, len);
+		}
+	}
+
+
+	//log(DEBUG, "the dst mac address is " ETHER_STRING ".\n", ETHER_FMT(eh->ether_dhost));
 
 	free(packet);
 }
